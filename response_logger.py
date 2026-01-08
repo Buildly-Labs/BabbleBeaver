@@ -73,6 +73,33 @@ class ChatHistory(Base):
     message = Column(String, nullable=True)
     timestamp = Column(DateTime, default=datetime.utcnow)
 
+
+def migrate_user_chats_table():
+    """
+    Migrate user_chats table to new schema with auto-increment id.
+    Drops the old table if it exists with wrong schema.
+    """
+    from sqlalchemy import inspect, text
+    
+    inspector = inspect(engine)
+    
+    # Check if table exists
+    if 'user_chats' in inspector.get_table_names():
+        columns = [col['name'] for col in inspector.get_columns('user_chats')]
+        
+        # If 'id' column doesn't exist, drop and recreate
+        if 'id' not in columns:
+            logger.info("Migrating user_chats table: dropping old schema and creating new one with id column")
+            with engine.connect() as conn:
+                conn.execute(text("DROP TABLE IF EXISTS user_chats CASCADE"))
+                conn.commit()
+            logger.info("Old user_chats table dropped")
+    
+    # Create table with new schema
+    Base.metadata.create_all(bind=engine, checkfirst=True)
+    logger.info("user_chats table ready with new schema")
+
+
 # ChatLogger class for inserting and selecting chat history
 class ChatLogger:
 
@@ -87,11 +114,11 @@ class ChatLogger:
     def __init__(self, table_name='user_chats'):
         self.table_name = table_name
 
-        # Create table(s) - use checkfirst=True to avoid errors if table exists
+        # Migrate table if needed, then create
         try:
-            Base.metadata.create_all(bind=engine, checkfirst=True)
+            migrate_user_chats_table()
         except Exception as e:
-            logger.warning(f"Table creation warning (may already exist): {e}")
+            logger.warning(f"Table migration/creation warning: {e}")
 
     def select_all_messages(self, session_id):
         print("session_id:", session_id)
