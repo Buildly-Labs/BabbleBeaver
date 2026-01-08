@@ -7,25 +7,26 @@ from random import sample
 from typing import Optional
 import sys
 
-from fastapi import FastAPI, Request, File, UploadFile
+from fastapi import FastAPI, Request, File, UploadFile, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 import openai  # Corrected import
 from ai_configurator import AIConfigurator
 from message_logger import MessageLogger
 from response_logger import ChatLogger
-
-import google.generativeai as genai
-from google.cloud import aiplatform
-import vertexai
-from vertexai.preview.generative_models import  GenerativeModel
-from google.cloud import aiplatform
+from auth import require_admin, verify_admin_credentials
+from token_manager import token_manager
+from llm_manager import llm_manager
+from context_manager import context_manager
 
 import google.generativeai as genai
 from google.generativeai import types
+from google.cloud import aiplatform
+import vertexai
+from vertexai.preview.generative_models import GenerativeModel
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
