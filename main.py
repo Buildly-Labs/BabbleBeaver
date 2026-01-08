@@ -600,6 +600,77 @@ async def update_system_prompt(
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@app.get("/admin/suggested-prompts")
+async def get_suggested_prompts(current_user: dict = Depends(require_admin)):
+    """Get current suggested prompts from suggested-prompts.txt."""
+    try:
+        with open("suggested-prompts.txt", "r") as f:
+            prompts = f.read().strip().split("\n")
+        return JSONResponse({
+            "prompts": prompts,
+            "count": len(prompts)
+        })
+    except FileNotFoundError:
+        return JSONResponse({"prompts": [], "count": 0})
+    except Exception as e:
+        logger.error(f"Error reading suggested prompts: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/admin/suggested-prompts")
+async def update_suggested_prompts(
+    request: Request,
+    current_user: dict = Depends(require_admin)
+):
+    """
+    Update suggested prompts in suggested-prompts.txt.
+    
+    Request body:
+        prompts: List of prompt strings OR single string with newline-separated prompts
+    """
+    try:
+        data = await request.json()
+        prompts_data = data.get("prompts", [])
+        
+        # Handle both list and string input
+        if isinstance(prompts_data, str):
+            # Split by newlines if string provided
+            prompts = [p.strip() for p in prompts_data.split("\n") if p.strip()]
+        elif isinstance(prompts_data, list):
+            prompts = [p.strip() for p in prompts_data if p.strip()]
+        else:
+            return JSONResponse(
+                {"error": "prompts must be a list or newline-separated string"},
+                status_code=400
+            )
+        
+        # Backup existing prompts
+        try:
+            with open("suggested-prompts.txt", "r") as f:
+                old_prompts = f.read()
+            with open("suggested-prompts.txt.backup", "w") as f:
+                f.write(old_prompts)
+        except FileNotFoundError:
+            pass  # No backup needed if file doesn't exist
+        
+        # Write new prompts
+        with open("suggested-prompts.txt", "w") as f:
+            f.write("\n".join(prompts))
+        
+        # Reload prompt_list global variable
+        global prompt_list
+        prompt_list = prompts
+        
+        return JSONResponse({
+            "message": "Suggested prompts updated successfully",
+            "count": len(prompts),
+            "backup_created": True
+        })
+    except Exception as e:
+        logger.error(f"Error updating suggested prompts: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.get("/admin/context-config")
 async def get_context_config(current_user: dict = Depends(require_admin)):
     """Get context-aware system configuration."""
@@ -804,11 +875,18 @@ async def chatbot(request: Request):
     data = await request.json()
     user_message, history, tokens, session_id = data.get("prompt"), data.get("history"), data.get("tokens"), data.get("session_id", "12344412")
 
-    full_prompt = f"""You are a helpful assistant that provides restaurant names and menu items to questions for users in Seattle. 
-        Answer the following user question using ONLY the relevant restaurant and product details provided below. Be specific, concise, and friendly. 
-        User Question:
-        {user_message}
-        """
+    # Load system prompt from file
+    try:
+        with open("initial-prompt.txt", "r") as f:
+            system_prompt = f.read().strip()
+    except FileNotFoundError:
+        system_prompt = "You are a helpful AI assistant."
+    
+    full_prompt = f"""{system_prompt}
+
+User Question:
+{user_message}
+"""
     
     logger.info(f"Chatbot request: {user_message[:100]}...")
 
