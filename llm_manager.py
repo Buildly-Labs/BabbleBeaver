@@ -181,6 +181,10 @@ class LLMManager:
     def _call_gemini(self, config: LLMConfig, prompt: str, **kwargs) -> str:
         """Call Gemini API (standard or Vertex AI)."""
         try:
+            # Get system prompt if provided
+            system_prompt = kwargs.get('system_prompt', '')
+            full_prompt = f"{system_prompt}\n\nUser Question:\n{prompt}" if system_prompt else prompt
+            
             # Check if using Vertex AI
             project_id = os.getenv("PROJECT_ID")
             
@@ -188,7 +192,7 @@ class LLMManager:
                 # Use Vertex AI
                 model = GenerativeModel(config.model_name)
                 response = model.generate_content(
-                    prompt,
+                    full_prompt,
                     generation_config={
                         'max_output_tokens': kwargs.get('max_tokens', config.max_tokens),
                         'temperature': kwargs.get('temperature', config.temperature)
@@ -199,7 +203,7 @@ class LLMManager:
                 # Use standard Gemini API
                 model = genai.GenerativeModel(config.model_name)
                 response = model.generate_content(
-                    prompt,
+                    full_prompt,
                     generation_config=genai.GenerationConfig(
                         max_output_tokens=kwargs.get('max_tokens', config.max_tokens),
                         temperature=kwargs.get('temperature', config.temperature)
@@ -213,10 +217,16 @@ class LLMManager:
     def _call_openai(self, config: LLMConfig, prompt: str, **kwargs) -> str:
         """Call OpenAI API."""
         try:
+            system_prompt = kwargs.get('system_prompt', '')
+            messages = []
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.append({"role": "user", "content": prompt})
+            
             client = openai.OpenAI(api_key=config.api_key)
             response = client.chat.completions.create(
                 model=config.model_name,
-                messages=[{"role": "user", "content": prompt}],
+                messages=messages,
                 max_tokens=kwargs.get('max_tokens', config.max_tokens),
                 temperature=kwargs.get('temperature', config.temperature)
             )
@@ -252,8 +262,9 @@ class LLMManager:
                 timeout=kwargs.get('timeout', 30.0)
             )
             
-            # Get context from kwargs if provided
+            # Get context and system_prompt from kwargs if provided
             context = kwargs.get('context', None)
+            system_prompt = kwargs.get('system_prompt', None)
             
             # Call agent (async) - handle both sync and async contexts
             try:
@@ -264,7 +275,7 @@ class LLMManager:
                 with concurrent.futures.ThreadPoolExecutor() as executor:
                     future = executor.submit(
                         asyncio.run,
-                        agent.chat_completion(prompt=prompt, context=context, stream=False)
+                        agent.chat_completion(prompt=prompt, context=context, system_prompt=system_prompt, stream=False)
                     )
                     response = future.result(timeout=kwargs.get('timeout', 30.0))
             except RuntimeError:
@@ -272,6 +283,7 @@ class LLMManager:
                 response = asyncio.run(agent.chat_completion(
                     prompt=prompt,
                     context=context,
+                    system_prompt=system_prompt,
                     stream=False
                 ))
             

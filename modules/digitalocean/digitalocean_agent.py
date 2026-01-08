@@ -69,6 +69,7 @@ class DigitalOceanAgent:
         self,
         prompt: str,
         context: Optional[Dict[str, Any]] = None,
+        system_prompt: Optional[str] = None,
         stream: bool = False
     ) -> Optional[str]:
         """
@@ -77,6 +78,7 @@ class DigitalOceanAgent:
         Args:
             prompt: User message/prompt
             context: Optional context dictionary for contextual responses
+            system_prompt: Optional system prompt to set AI behavior
             stream: Whether to stream the response (default: False)
             
         Returns:
@@ -100,20 +102,30 @@ class DigitalOceanAgent:
         }
         
         # Build payload according to DigitalOcean Gradient AI API
-        payload = {
-            'messages': [
-                {'role': 'user', 'content': prompt}
-            ]
-        }
+        messages = []
         
-        # Add context if provided
+        # Add system prompt if provided
+        if system_prompt:
+            messages.append({
+                'role': 'system',
+                'content': system_prompt
+            })
+        
+        # Add context as system message if provided
         if context:
-            # Prepend context as a system message
             context_message = self._format_context(context)
-            payload['messages'].insert(0, {
+            messages.append({
                 'role': 'system',
                 'content': context_message
             })
+        
+        # Add user message
+        messages.append({
+            'role': 'user',
+            'content': prompt
+        })
+        
+        payload = {'messages': messages}
         
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:

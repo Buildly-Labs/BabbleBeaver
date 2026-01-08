@@ -882,18 +882,16 @@ async def chatbot(request: Request):
     except FileNotFoundError:
         system_prompt = "You are a helpful AI assistant."
     
-    full_prompt = f"""{system_prompt}
-
-User Question:
-{user_message}
-"""
-    
     logger.info(f"Chatbot request: {user_message[:100]}...")
 
     response_logger.insert_message(session_id, "user", user_message)
 
     # Use configured LLM providers (respects priority: 0 first, then fallback to 1, 2, etc.)
-    result = llm_manager.generate(prompt=full_prompt)
+    # Pass system_prompt separately so it can be sent as a system message
+    result = llm_manager.generate(
+        prompt=user_message,
+        system_prompt=system_prompt
+    )
     response_text = result.get('response', '')
     model_version = result.get('model', 'unknown')
     token_count = result.get('tokens_used', 0)
@@ -902,7 +900,6 @@ User Question:
     response_logger.insert_message(session_id, "bot", response_text)
 
     return {
-        'prompt': full_prompt, 
         'user_prompt': user_message, 
         'kai_response': response_text, 
         'model_version': model_version, 
