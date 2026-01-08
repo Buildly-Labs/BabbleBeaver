@@ -1,14 +1,56 @@
 import os
 import uuid
 from datetime import datetime
+import logging
 
 from sqlalchemy import create_engine, Column, String, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
+logger = logging.getLogger(__name__)
+
 Base = declarative_base()
-DATABASE_URL = os.getenv("DATABASE_URL") or "postgresql://postgres:password@localhost:5432/mydatabase"
-engine = create_engine(DATABASE_URL)
+
+
+def get_database_url():
+    """
+    Get and normalize the database URL.
+    
+    Handles the postgres:// vs postgresql:// issue with DigitalOcean/Heroku
+    and SQLAlchemy 1.4+.
+    """
+    database_url = os.getenv("DATABASE_URL")
+    
+    if not database_url:
+        # Fallback to SQLite for local development
+        logger.warning("DATABASE_URL not set for response_logger, using SQLite fallback")
+        os.makedirs("db", exist_ok=True)
+        return "sqlite:///db/response_logger.db"
+    
+    # DigitalOcean/Heroku use postgres:// but SQLAlchemy 1.4+ requires postgresql://
+    if database_url.startswith("postgres://"):
+        database_url = database_url.replace("postgres://", "postgresql://", 1)
+        logger.info("Converted postgres:// to postgresql:// for SQLAlchemy compatibility")
+    
+    return database_url
+
+
+DATABASE_URL = get_database_url()
+
+# Configure engine with appropriate settings based on database type
+if DATABASE_URL.startswith("sqlite"):
+    engine = create_engine(
+        DATABASE_URL,
+        connect_args={"check_same_thread": False}
+    )
+else:
+    engine = create_engine(
+        DATABASE_URL,
+        pool_size=5,
+        max_overflow=10,
+        pool_pre_ping=True
+    )
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Define the ChatHistory model

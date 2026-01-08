@@ -93,6 +93,11 @@ class DatabaseManager:
         """
         self.database_url = database_url or os.getenv('DATABASE_URL')
         
+        # Handle postgres:// to postgresql:// conversion (DigitalOcean/Heroku compatibility)
+        if self.database_url and self.database_url.startswith('postgres://'):
+            self.database_url = self.database_url.replace('postgres://', 'postgresql://', 1)
+            logger.info("Converted postgres:// to postgresql:// for SQLAlchemy compatibility")
+        
         # Determine database type and configure connection
         if self.database_url and self.database_url.startswith('postgresql://'):
             self.db_type = 'postgresql'
