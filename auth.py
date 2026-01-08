@@ -56,6 +56,33 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Security(
     )
 
 
+def verify_token(token: str) -> dict:
+    """
+    Verify a token synchronously (for non-FastAPI contexts like static file serving).
+    
+    Args:
+        token: The API token to verify
+        
+    Returns:
+        User info dict
+        
+    Raises:
+        HTTPException: If authentication fails
+    """
+    # Check environment variable token first
+    if API_KEY and token == API_KEY:
+        return {"authenticated": True, "type": "api_key", "sub": "env_token"}
+    
+    # Check database tokens
+    if token_manager.verify_token(token):
+        return {"authenticated": True, "type": "api_key", "sub": "api_access"}
+    
+    raise HTTPException(
+        status_code=401,
+        detail="Invalid or expired API token"
+    )
+
+
 async def require_admin(credentials: HTTPAuthorizationCredentials = Security(security)) -> dict:
     """
     Dependency to require admin API key authentication.
