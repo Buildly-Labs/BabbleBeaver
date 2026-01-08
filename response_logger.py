@@ -4,7 +4,7 @@ from datetime import datetime
 import logging
 import re
 
-from sqlalchemy import create_engine, Column, String, DateTime
+from sqlalchemy import create_engine, Column, String, DateTime, Integer
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
@@ -67,7 +67,8 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 # Define the ChatHistory model
 class ChatHistory(Base):
     __tablename__ = "user_chats"
-    session_id = Column(String, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String, index=True)
     sender = Column(String)
     message = Column(String, nullable=True)
     timestamp = Column(DateTime, default=datetime.utcnow)
