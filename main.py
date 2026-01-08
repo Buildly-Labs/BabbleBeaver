@@ -59,13 +59,27 @@ PROJECT_ID = os.getenv("PROJECT_ID")
 PROJECT_NAME = os.getenv("PROJECT_NAME")
 LOCATION = os.getenv("LOCATION")
 ENDPOINT_ID = os.getenv("ENDPOINT_ID")
+FINE_TUNED_MODEL = os.getenv("FINE_TUNED_MODEL")
 
-vertexai.init(project=PROJECT_NAME, location=LOCATION)
-model = GenerativeModel(os.getenv("FINE_TUNED_MODEL"))
-aiplatform.init(
-    project=PROJECT_ID,
-    location=LOCATION
-)
+# Initialize Vertex AI only if credentials are available
+model = None
+VERTEX_AI_AVAILABLE = False
+
+if PROJECT_NAME and LOCATION and FINE_TUNED_MODEL:
+    try:
+        vertexai.init(project=PROJECT_NAME, location=LOCATION)
+        model = GenerativeModel(FINE_TUNED_MODEL)
+        aiplatform.init(
+            project=PROJECT_ID,
+            location=LOCATION
+        )
+        VERTEX_AI_AVAILABLE = True
+        logger.info("Vertex AI initialized successfully")
+    except Exception as e:
+        logger.warning(f"Vertex AI not available: {e}. Using alternative LLM providers.")
+        VERTEX_AI_AVAILABLE = False
+else:
+    logger.info("Vertex AI credentials not configured. Using alternative LLM providers.")
 
 # FastAPI app instance
 app = FastAPI(debug=True)
@@ -785,28 +799,33 @@ def generate_from(user_prompt, project_id, location, endpoint_id):
 
 @app.post("/chatbot")
 async def chatbot(request: Request):
-    project_id = os.getenv("PROJECT_ID")
-    location = os.getenv("LOCATION")
-    endpoint_id = os.getenv("ENDPOINT_ID")
-    
     data = await request.json()
-    user_message, history, tokens, session_id = data.get("prompt"), data.get("history"), data.get("tokens") , '12344412'       
+    user_message, history, tokens, session_id = data.get("prompt"), data.get("history"), data.get("tokens"), data.get("session_id", "12344412")
 
-    full_prompt = f"""You are a helpful assistant that provides resaurant names and menu items to questions for users in Seattle. 
+    full_prompt = f"""You are a helpful assistant that provides restaurant names and menu items to questions for users in Seattle. 
         Answer the following user question using ONLY the relevant restaurant and product details provided below. Be specific, concise, and friendly. 
         User Question:
         {user_message}
         """
     
-    print(user_message)
+    logger.info(f"Chatbot request: {user_message[:100]}...")
 
     response_logger.insert_message(session_id, "user", user_message)
 
-    response = generate_from(full_prompt, project_id, location, endpoint_id)
-    response_dict = response
+    # Use configured LLM providers (respects priority: 0 first, then fallback to 1, 2, etc.)
+    result = llm_manager.generate(prompt=full_prompt)
+    response_text = result.get('response', '')
+    model_version = result.get('model', 'unknown')
+    token_count = result.get('tokens_used', 0)
 
     message_logger.log_message(user_message, session_id)
-    
-    response_logger.insert_message(session_id, "bot", response_dict['text'])
+    response_logger.insert_message(session_id, "bot", response_text)
 
-    return {'prompt': full_prompt, 'user_prompt': user_message, 'kai_response': response_dict['text'], 'model_version': response_dict['model_version'], 'history': "response_logger.select_all_messages(session_id)", 'tokens': response_dict['total_token_count']}
+    return {
+        'prompt': full_prompt, 
+        'user_prompt': user_message, 
+        'kai_response': response_text, 
+        'model_version': model_version, 
+        'history': "response_logger.select_all_messages(session_id)", 
+        'tokens': token_count
+    }
