@@ -19,8 +19,9 @@ from message_logger import MessageLogger
 from response_logger import ChatLogger
 from auth import require_admin, verify_admin_credentials
 from token_manager import token_manager
-from llm_manager import llm_manager
+from llm_manager import llm_manager, LLMProvider
 from context_manager import context_manager
+from context_builder import context_builder
 
 import google.generativeai as genai
 from google.generativeai import types
@@ -712,7 +713,7 @@ async def index_view(request: Request):
 async def test_view(request: Request):
     """Render test chat UI (authentication via frontend)."""
     # Frontend will handle auth by sending bearer token with API requests
-    return templates.TemplateResponse("test.html", {"request": request})
+    return templates.TemplateResponse("chat.html", {"request": request})
 
 
 @app.get("/chat", response_class=HTMLResponse)
