@@ -91,7 +91,14 @@ class DatabaseManager:
         Args:
             database_url: Override database URL (optional)
         """
+        import re
         self.database_url = database_url or os.getenv('DATABASE_URL')
+        
+        # Validate the URL - check for unresolved placeholders or invalid format
+        if self.database_url:
+            if self.database_url.startswith("${") or not re.match(r'^[a-zA-Z][a-zA-Z0-9+.-]*://', self.database_url):
+                logger.error(f"DATABASE_URL appears to be invalid or unresolved placeholder: {self.database_url[:50]}...")
+                self.database_url = None
         
         # Handle postgres:// to postgresql:// conversion (DigitalOcean/Heroku compatibility)
         if self.database_url and self.database_url.startswith('postgres://'):
