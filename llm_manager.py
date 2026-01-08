@@ -237,6 +237,13 @@ class LLMManager:
         
         try:
             import asyncio
+            import nest_asyncio
+            
+            # Allow nested event loops (needed when called from FastAPI async context)
+            try:
+                nest_asyncio.apply()
+            except Exception:
+                pass  # Already applied or not needed
             
             # Create agent with stored configuration
             agent = DigitalOceanAgent(
@@ -248,12 +255,25 @@ class LLMManager:
             # Get context from kwargs if provided
             context = kwargs.get('context', None)
             
-            # Call agent (async)
-            response = asyncio.run(agent.chat_completion(
-                prompt=prompt,
-                context=context,
-                stream=False
-            ))
+            # Call agent (async) - handle both sync and async contexts
+            try:
+                # Try to get existing event loop
+                loop = asyncio.get_running_loop()
+                # If we're in an async context, create a task and run it
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(
+                        asyncio.run,
+                        agent.chat_completion(prompt=prompt, context=context, stream=False)
+                    )
+                    response = future.result(timeout=kwargs.get('timeout', 30.0))
+            except RuntimeError:
+                # No running event loop, safe to use asyncio.run
+                response = asyncio.run(agent.chat_completion(
+                    prompt=prompt,
+                    context=context,
+                    stream=False
+                ))
             
             if not response:
                 raise Exception("DigitalOcean agent returned no response")
