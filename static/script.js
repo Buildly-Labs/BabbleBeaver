@@ -84,7 +84,7 @@ $(document).ready(function () {
       success: function (data) {
         console.log("data: ", data);
         const botMessage = data.history;
-        const kaiMessage = data.kai_response;
+        const kaiMessage = data.response;
         const rawPrompt = data.user_prompt;
         const fullPrompt = data.prompt;
         const usedTokens = data.tokens;

@@ -884,7 +884,7 @@ async def chatbot(request: Request):
     
     if not user_message:
         logger.error(f"No user message found in request. Data: {data}")
-        return {"error": "No prompt provided", "kai_response": "I didn't receive a message. Please try again."}
+        return {"error": "No prompt provided", "response": "I didn't receive a message. Please try again."}
 
     # Load system prompt from file
     try:
@@ -915,7 +915,7 @@ async def chatbot(request: Request):
 
     return {
         'user_prompt': user_message, 
-        'kai_response': response_text, 
+        'response': response_text,
         'model_version': model_version, 
         'history': "response_logger.select_all_messages(session_id)", 
         'tokens': token_count
