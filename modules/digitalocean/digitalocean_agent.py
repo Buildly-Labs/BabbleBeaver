@@ -127,10 +127,17 @@ class DigitalOceanAgent:
         
         payload = {'messages': messages}
         
+        # DigitalOcean agents require the /api/v1/chat/completions path
+        endpoint_url = self.agent_url.rstrip('/')
+        if not endpoint_url.endswith('/api/v1/chat/completions'):
+            endpoint_url = f"{endpoint_url}/api/v1/chat/completions"
+        
+        logger.debug(f"Calling DigitalOcean agent at: {endpoint_url}")
+        
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(
-                    self.agent_url,
+                    endpoint_url,
                     headers=headers,
                     json=payload
                 )
