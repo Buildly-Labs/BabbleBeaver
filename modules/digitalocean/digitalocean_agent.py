@@ -132,7 +132,8 @@ class DigitalOceanAgent:
         if not endpoint_url.endswith('/api/v1/chat/completions'):
             endpoint_url = f"{endpoint_url}/api/v1/chat/completions"
         
-        logger.debug(f"Calling DigitalOcean agent at: {endpoint_url}")
+        logger.info(f"Calling DigitalOcean agent at: {endpoint_url}")
+        logger.info(f"Payload messages count: {len(messages)}, user prompt: {prompt[:100] if prompt else 'EMPTY'}...")
         
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -144,6 +145,8 @@ class DigitalOceanAgent:
                 response.raise_for_status()
                 
                 data = response.json()
+                
+                logger.info(f"DigitalOcean raw response: {str(data)[:500]}...")
                 
                 # Extract response based on DigitalOcean response format
                 # Format: {"response": "...", "status": "success"}

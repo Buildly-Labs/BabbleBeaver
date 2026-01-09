@@ -873,7 +873,18 @@ def generate_from(user_prompt, project_id, location, endpoint_id):
 @app.post("/chatbot")
 async def chatbot(request: Request):
     data = await request.json()
+    logger.info(f"Chatbot received data keys: {data.keys()}")
     user_message, history, tokens, session_id = data.get("prompt"), data.get("history"), data.get("tokens"), data.get("session_id", "12344412")
+    
+    # Also check for alternative field names Labs might use
+    if not user_message:
+        user_message = data.get("message") or data.get("text") or data.get("query") or ""
+        if user_message:
+            logger.info(f"Found user message in alternative field")
+    
+    if not user_message:
+        logger.error(f"No user message found in request. Data: {data}")
+        return {"error": "No prompt provided", "kai_response": "I didn't receive a message. Please try again."}
 
     # Load system prompt from file
     try:
@@ -892,9 +903,12 @@ async def chatbot(request: Request):
         prompt=user_message,
         system_prompt=system_prompt
     )
+    logger.info(f"LLM result: {result}")
     response_text = result.get('response', '')
     model_version = result.get('model', 'unknown')
     token_count = result.get('tokens_used', 0)
+    
+    logger.info(f"Response text (first 200 chars): {response_text[:200] if response_text else 'EMPTY'}...")
 
     message_logger.log_message(user_message, session_id)
     response_logger.insert_message(session_id, "bot", response_text)
