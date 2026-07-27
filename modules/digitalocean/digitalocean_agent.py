@@ -100,32 +100,22 @@ class DigitalOceanAgent:
             'Authorization': f'Bearer {self.api_token}',
             'Content-Type': 'application/json'
         }
-        
-        # Build payload according to DigitalOcean Gradient AI API
-        messages = []
-        
-        # Add system prompt if provided
+
+        # DigitalOcean Gradient AI agents reject system/developer role messages
+        # ("agent instructions are set via agent configuration"), so fold any
+        # system_prompt/context into the user message instead of separate messages.
+        user_content_parts = []
         if system_prompt:
-            messages.append({
-                'role': 'system',
-                'content': system_prompt
-            })
-        
-        # Add context as system message if provided
+            user_content_parts.append(system_prompt)
         if context:
-            context_message = self._format_context(context)
-            messages.append({
-                'role': 'system',
-                'content': context_message
-            })
-        
-        # Add user message
-        messages.append({
-            'role': 'user',
-            'content': prompt
-        })
-        
-        payload = {'messages': messages}
+            user_content_parts.append(self._format_context(context))
+        user_content_parts.append(prompt)
+
+        payload = {
+            'messages': [
+                {'role': 'user', 'content': "\n\n".join(user_content_parts)}
+            ]
+        }
         
         # DigitalOcean agents require the /api/v1/chat/completions path
         endpoint_url = self.agent_url.rstrip('/')
