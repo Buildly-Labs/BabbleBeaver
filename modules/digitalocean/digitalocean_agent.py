@@ -123,7 +123,7 @@ class DigitalOceanAgent:
             endpoint_url = f"{endpoint_url}/api/v1/chat/completions"
         
         logger.info(f"Calling DigitalOcean agent at: {endpoint_url}")
-        logger.info(f"Payload messages count: {len(messages)}, user prompt: {prompt[:100] if prompt else 'EMPTY'}...")
+        logger.info(f"Payload messages count: {len(payload['messages'])}, user prompt: {prompt[:100] if prompt else 'EMPTY'}...")
         
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
