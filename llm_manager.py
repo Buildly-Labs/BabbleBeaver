@@ -259,7 +259,7 @@ class LLMManager:
             agent = DigitalOceanAgent(
                 api_token=config.api_key,
                 agent_url=config.model_name,  # URL is stored in model_name
-                timeout=kwargs.get('timeout', 30.0)
+                timeout=kwargs.get('timeout', 90.0)
             )
             
             # Get context and system_prompt from kwargs if provided
@@ -277,7 +277,7 @@ class LLMManager:
                         asyncio.run,
                         agent.chat_completion(prompt=prompt, context=context, system_prompt=system_prompt, stream=False)
                     )
-                    response = future.result(timeout=kwargs.get('timeout', 30.0))
+                    response = future.result(timeout=kwargs.get('timeout', 90.0))
             except RuntimeError:
                 # No running event loop, safe to use asyncio.run
                 response = asyncio.run(agent.chat_completion(
