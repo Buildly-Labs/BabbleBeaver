@@ -34,15 +34,15 @@ class DigitalOceanAgent:
         self, 
         api_token: Optional[str] = None,
         agent_url: Optional[str] = None,
-        timeout: float = 30.0
+        timeout: float = 90.0
     ):
         """
         Initialize the DigitalOcean Agent client.
-        
+
         Args:
             api_token: API token for authentication
             agent_url: Full agent endpoint URL
-            timeout: Request timeout in seconds (default: 30.0)
+            timeout: Request timeout in seconds (default: 90.0)
         """
         self.api_token = api_token or os.getenv('DIGITALOCEAN_API_TOKEN')
         self.agent_url = agent_url or os.getenv('DIGITALOCEAN_AGENT_URL')
