@@ -17,7 +17,7 @@ import openai  # Corrected import
 from ai_configurator import AIConfigurator
 from message_logger import MessageLogger
 from response_logger import ChatLogger
-from auth import require_admin, verify_admin_credentials
+from auth import require_admin, require_chatbot_auth, verify_admin_credentials
 from token_manager import token_manager
 from llm_manager import llm_manager, LLMProvider
 from context_manager import context_manager
@@ -32,19 +32,6 @@ from vertexai.preview.generative_models import GenerativeModel
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-app = FastAPI(debug=True)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=os.getenv("CORS_ALLOWED_DOMAINS", "*").split(","),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
 
 ai_configurator = AIConfigurator()
 message_logger = MessageLogger()
@@ -84,7 +71,7 @@ else:
     logger.info("Vertex AI credentials not configured. Using alternative LLM providers.")
 
 # FastAPI app instance
-app = FastAPI(debug=True)
+app = FastAPI(debug=os.getenv("DEBUG", "false").lower() == "true")
 
 # Middleware for CORS
 # Configure allowed origins from environment or use defaults
@@ -106,7 +93,7 @@ else:
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("CORS_ALLOWED_DOMAINS", "*").split(","),
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
@@ -871,7 +858,7 @@ def generate_from(user_prompt, project_id, location, endpoint_id):
 
 
 @app.post("/chatbot")
-async def chatbot(request: Request):
+async def chatbot(request: Request, _auth: dict = Depends(require_chatbot_auth)):
     data = await request.json()
     logger.info(f"Chatbot received data keys: {data.keys()}")
     user_message, history, tokens, session_id = data.get("prompt"), data.get("history"), data.get("tokens"), data.get("session_id", "12344412")

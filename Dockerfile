@@ -16,9 +16,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy project
 COPY . .
 
-# Download GCP credentials from Google Cloud Storage
-RUN apt-get update && apt-get install -y curl && \
-  curl -o /app/drunr-prod-97f378603f61.json https://storage.googleapis.com/drunr_files_bucket/gcp_creds.json
+# GCP credentials (if needed) are provided at runtime via GOOGLE_APPLICATION_CREDENTIALS
+# or uploaded through /upload_credentials — never fetched or baked into the image.
 
 # Command to run the app
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--reload"]

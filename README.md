@@ -1,10 +1,12 @@
 # BabbleBeaver
 
-Welcome to BabbleBeaver, an open-source conversational AI platform designed with privacy and flexibility in mind. BabbleBeaver leverages the power of Large Language Models (LLM) to provide customizable and isolated conversational agents, encapsulated in Docker containers for easy deployment and management.
+BabbleBeaver is an open-source, provider-agnostic runtime for portable AI services and agents. It lets developers run AI workloads locally, in private infrastructure, or through providers of their choice, without coupling their application to one AI vendor.
 
 ## Overview
 
-BabbleBeaver aims to democratize conversational AI, offering a plug-and-play solution that respects user privacy and data sovereignty. Built on top of FastAPI, BabbleBeaver facilitates rapid development and deployment of AI-powered chatbots with support for multiple, isolated LLM implementations.
+BabbleBeaver aims to democratize conversational AI, offering a plug-and-play solution that respects user privacy and data sovereignty. Built on top of FastAPI, BabbleBeaver facilitates rapid development and deployment of AI-powered chatbots and agents, routing requests through a swappable provider layer (`llm_manager.py`) instead of binding directly to any single vendor's SDK or API.
+
+Portability is the point: the same application code should keep working whether requests are served by a local/self-hosted model, a private deployment, or a hosted provider — and switching between them should be a configuration change, not a rewrite.
 
 ## Installation
 
@@ -21,7 +23,7 @@ To configure environment variables for BabbleBeaver, you need to create a `.env`
 
 Make sure to keep the `.env` file secure and do not expose it publicly, as it may contain sensitive information.
 
-To obtain the GOOGLE_APPLICATION_CREDENTIALS in the .env locate file inside the storage bucket: drunr_model_dataset, file is named: drunr-prod-97f378603f61.json. Place this file in an ./assets folder. Permission/Roles are managaed by vertexai_bot. 
+For Gemini/Vertex AI, `GOOGLE_APPLICATION_CREDENTIALS` should point at a service account JSON key that you provision yourself in Google Cloud Console (IAM & Admin > Service Accounts) and store securely — never fetch credentials from a public URL or commit them to version control. See [SECURITY.md](SECURITY.md) for secrets-handling guidance.
 
 To obtain the ENDPOINT_ID, the endpoint is found under the fine-tuned model in Model Garden
 
@@ -59,31 +61,19 @@ docker-compose up --build
 
 - **Ensure Docker and Docker Compose are installed on your system before running these commands.**
 
-## Integrating a new model
-At the time, BabbleBeaver is set up to work with LLMs available through several major proprietary providers such as OpenAI, Google, Mistral, Anthropic, and Cohere. It also supports LLM integration via open-source providers such as Ollama, OpenRouter, and HuggingFace. If you would like to integrate a specific model, please make sure to follow the given steps exactly:
-1. Once you're in the project root directory, navigate to the `model_config.ini` configuration file in the `model_config` directory
+## Provider configuration
 
-2. For the new LLM which you'd like to use create a new entry in the configuration file exactly as follows with the following parameters. Keep in mind that none of the lines should be wrapped in quotes. The ones below are just to demonstrate how each line must be specified.
-    - *"[`name of the model`]"* - The model name must be enclosed within square brackets and the name must correspond to the actual model ID specified by the provider (**REQUIRED**)
-    - *"provider = `name of provider`"* (**REQUIRED**)
-    - *"context_length = `the model's context window`"* - This needs to be an integer (**REQUIRED**)
-    - *"api_key = `os.getenv("NAME OF API KEY IN .env file")`"* - If working with Ollama, replace the right side of this expression with any random string. (**REQUIRED**)
-    - *"max_output_tokens = `maximum number of tokens this LLM should generate per output.`"* - This needs to be an integer (**OPTIONAL**)
-    - *"temperature = `a floating point value dictating what kinds of outputs the LLM provides`"* - This value needs to be in the range `0 <= temperature <= 1` (**OPTIONAL**)
+BabbleBeaver currently ships with built-in support for **Gemini/Vertex AI**, **OpenAI**, and **DigitalOcean Gradient AI agents**, managed centrally by `llm_manager.py`. Each provider is configured entirely through environment variables — no code changes needed to enable, disable, reprioritize, or reconfigure a provider that's already supported:
 
-3. Once you've finished adding the model to the configuration file, head over to the `main.py` file.
+- `<PROVIDER>_ENABLED` — `true`/`false`
+- `<PROVIDER>_PRIORITY` — lower number = tried first; `llm_manager` falls back to the next enabled provider on failure
+- `<PROVIDER>_MODEL` / provider-specific keys (API keys, URLs, etc.)
 
-4. Here, if you scroll down to the `/chatbot` endpoint, you will notice that you need to provide a few pieces of information pertaining to the model you want to use to get it up and running. The following are the ones you need to provide:
-    - **Param 1**: `llm` - The name of the model as specified in the configuration file(**An error will be thrown if there's a mismatch**)
-    - **Param 2**: `provider` - The name of the provider as specified in the configuration file(**An error will be thrown if there's a mismatch**)
-    - **Param 3**: `tokenizer_function` - The tokenizer associated with this given model. **Make sure that this is a function**.
-    - **Param 4**: `completion_function` - All you need to do is fill in the body of this pre-created function with the API call to be made to get a response from the model. **Make sure not to modify any of the parameters**.
-    - **Param 5**: `use_initial_prompt` - Certain models may not support system instructions like `gemini-1.0-pro` for instance, although most models do. You still need to specify this parameter(**as a boolean**) in the function call to `set_model` to ensure that system instructions are passed in along with each API call made if you would like to do so.
+See `example.env` for the full list of supported variables per provider.
 
-**IMPORTANT NOTE**: There are some special considerations especially if you're integrating an Ollama model such as the following:
-- You need to download Ollama locally and you can do so through this [link](https://ollama.com/download)
-- Once you've downloaded Ollama, open up a terminal and first make sure to run the following command: `ollama pull model_name` where `model_name` corresponds to the model you want to integrate
-- After you've pulled the model, run `ollama serve` to start Ollama up locally. After this point, you can use the model but keep in mind that when you're specifying the `completion_function` parameter in `main.py` and when using the OpenAI completions API to generate an output from this model, you specify the `base_url` parameter as well when instantiating the client, providing `http://localhost:11434/v1/` as the value
+**Adding support for a new provider** (one not already built in) currently requires implementing a `_call_<provider>` method in `llm_manager.py` and registering it in the `LLMProvider` enum and dispatch logic — there is no plugin/config-only mechanism yet. This is a known gap relative to BabbleBeaver's provider-agnostic goals; see [SECURITY.md](SECURITY.md) and open issues for the extension-point work in progress. `HuggingFace` is present in configuration but not yet implemented (`NotImplementedError`).
+
+A `model_config/model_config.ini` file exists in the repo from an earlier architecture but is **not read by the running application** — ignore it; provider configuration is env-var driven as described above.
 
 ## Features
 
