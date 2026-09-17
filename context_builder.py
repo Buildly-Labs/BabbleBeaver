@@ -52,44 +52,49 @@ class ContextBuilder:
         self,
         base_prompt: str,
         context: Optional[Dict[str, Any]] = None,
-        product_context: Optional[Dict[str, Any]] = None
+        product_context: Optional[Dict[str, Any]] = None,
+        template_override: Optional[str] = None
     ) -> str:
         """
         Build enhanced system prompt with context awareness.
-        
+
         Args:
             base_prompt: Original system prompt
             context: User-provided context (from frontend)
             product_context: Enriched product context (from Buildly Agent)
-            
+            template_override: Use this template ("minimal"/"verbose") instead
+                of the configured default for this call only - lets callers
+                (e.g. context_learner, per task type) choose per-request
+                without mutating this shared instance's config.
+
         Returns:
             Enhanced system prompt with context information
         """
         # If feature is explicitly disabled, return base prompt
         if self.disabled:
             return base_prompt
-            
+
         # If no context provided, return base prompt unchanged
         if not context and not product_context:
             return base_prompt
-        
+
         # Build generic context from any provided data
         context_lines = []
-        
+
         # Generic context from user-provided data (accept ANY JSON)
         if context and isinstance(context, dict):
             context_lines.extend(self._format_generic_context(context))
-        
+
         # Product context from Buildly Agent (if enriched)
         if product_context and product_context.get("enabled"):
             context_lines.extend(self._format_product_enrichment(product_context))
-        
+
         if not context_lines:
             return base_prompt
-        
+
         # Format based on template
-        template = self.config.get("prompt_template", "minimal")
-        
+        template = template_override or self.config.get("prompt_template", "minimal")
+
         if template == "verbose":
             return self._verbose_template(base_prompt, context_lines)
         else:  # minimal (default)

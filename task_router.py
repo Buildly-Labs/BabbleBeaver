@@ -139,6 +139,7 @@ def record_outcome(
     success: bool,
     latency_ms: Optional[int] = None,
     error: Optional[str] = None,
+    context_template: Optional[str] = None,
 ):
     """Persist a single routing attempt's outcome for future scoring."""
     task_type = (task_type or DEFAULT_TASK_TYPE).strip().lower()
@@ -152,6 +153,7 @@ def record_outcome(
                 success=success,
                 latency_ms=latency_ms,
                 error=error,
+                context_template=context_template,
             ))
     except Exception as e:
         # Outcome tracking is best-effort - never let it break the actual request.

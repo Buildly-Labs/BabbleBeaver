@@ -81,6 +81,20 @@ By default, `/chatbot` tries providers in priority order with automatic fallback
 
 BabbleBeaver records the outcome (success/failure, latency) of every provider actually attempted for each task type, and uses that history to reorder future attempts within a task type — a provider that's been failing or slow for a *specific* task type gets tried later, automatically, without editing the `ROUTE_<TASK_TYPE>` config by hand. This only reorders; it never removes a configured provider from the fallback chain. View the data behind this via `GET /admin/routing/outcomes` (admin auth required).
 
+### Context-level learning
+
+If a request includes a `context` and/or `product_context` object, `ContextBuilder` folds it into the system prompt using one of two templates — `minimal` (a short "CURRENT CONTEXT" block) or `verbose` (an explicit "use this context, ask clarifying questions if insufficient" instruction block). Requests without `context`/`product_context` are unaffected either way.
+
+Which template is used is itself chosen per task type, in priority order:
+
+1. An explicit `CONTEXT_TEMPLATE_<TASK_TYPE>=minimal|verbose` env var, if set.
+2. Otherwise, once there's enough recent outcome history (at least 5 samples) for *both* templates on that task type, whichever has the better success rate (latency as tiebreaker) for that specific task type.
+3. Otherwise, `ContextBuilder`'s own configured default (`minimal`).
+
+This reuses the same outcome-tracking table and success/latency proxy signal as task-based routing (see `GET /admin/routing/outcomes`, which now also breaks results down by `(task_type, context_template)`) — there's no separate quality signal or explicit user feedback yet, so treat the "learning" here as a proxy: it optimizes for calls that complete successfully and quickly, not for response quality a person actually judged. Real user feedback (thumbs up/down or similar) would be a stronger signal and is a natural next step.
+
+Note this currently learns *which template to use*, not *which context fields to include* — every field passed in `context`/`product_context` is still formatted and sent as-is; deciding which fields are actually worth including per task type is a larger, separate step for later.
+
 ## Features
 
 ### Database Management

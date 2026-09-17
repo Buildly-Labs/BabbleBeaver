@@ -81,6 +81,13 @@ class RoutingOutcome(Base):
     task type, whether it succeeded, and how long it took. Feeds the routing
     scorer so repeated failures/slowness for a (task_type, provider) pair
     demote that provider without requiring a manual config change.
+
+    `context_template` records which context/prompt template (see
+    context_learner.py) was used to build the request this attempt was part
+    of - a per-request property, so every attempt row for the same request
+    shares the same value. This lets the same success/latency signal used
+    for provider routing also be sliced by template to learn which
+    formatting works best per task type.
     """
     __tablename__ = 'routing_outcomes'
 
@@ -92,6 +99,7 @@ class RoutingOutcome(Base):
     success = Column(Boolean, nullable=False)
     latency_ms = Column(Integer)
     error = Column(Text, nullable=True)
+    context_template = Column(String(50), nullable=True, index=True)
 
     def to_dict(self):
         """Convert model to dictionary."""
@@ -103,7 +111,8 @@ class RoutingOutcome(Base):
             'provider_type': self.provider_type,
             'success': self.success,
             'latency_ms': self.latency_ms,
-            'error': self.error
+            'error': self.error,
+            'context_template': self.context_template
         }
 
 
@@ -177,9 +186,32 @@ class DatabaseManager:
         try:
             Base.metadata.create_all(bind=self.engine)
             logger.info("Database tables created/verified")
+            self._migrate_routing_outcomes_context_template()
         except Exception as e:
             logger.error(f"Error creating database tables: {e}")
             raise
+
+    def _migrate_routing_outcomes_context_template(self):
+        """
+        Additive migration: add routing_outcomes.context_template if this is
+        an existing deployment whose table predates that column. Nullable
+        column, so this never touches existing rows' data - only avoids
+        wiping accumulated outcome history the way a drop/recreate would.
+        """
+        from sqlalchemy import inspect, text
+        try:
+            inspector = inspect(self.engine)
+            if 'routing_outcomes' not in inspector.get_table_names():
+                return
+            columns = [col['name'] for col in inspector.get_columns('routing_outcomes')]
+            if 'context_template' in columns:
+                return
+            logger.info("Migrating routing_outcomes: adding context_template column")
+            with self.engine.connect() as conn:
+                conn.execute(text("ALTER TABLE routing_outcomes ADD COLUMN context_template VARCHAR(50)"))
+                conn.commit()
+        except Exception as e:
+            logger.warning(f"routing_outcomes context_template migration skipped: {e}")
     
     @contextmanager
     def get_session(self) -> Session:

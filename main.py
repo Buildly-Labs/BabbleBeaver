@@ -23,6 +23,7 @@ from llm_manager import llm_manager, LLMProvider, AllProvidersFailedError
 from context_manager import context_manager
 from context_builder import context_builder
 import task_router
+import context_learner
 
 import google.generativeai as genai
 from google.generativeai import types
@@ -464,10 +465,12 @@ async def get_routing_outcomes(
     current_user: dict = Depends(require_admin)
 ):
     """
-    View recent task-routing outcomes and the per-(task_type, provider)
-    success rate / average latency the router is using to score providers.
-    Optionally filter to a single task_type; `hours` controls the lookback
-    window (default 24, matching the router's own scoring window).
+    View recent task-routing outcomes: the per-(task_type, provider) success
+    rate / average latency the router uses to score providers, and the
+    per-(task_type, context_template) breakdown context_learner uses to
+    pick between the "minimal"/"verbose" prompt templates. Optionally filter
+    to a single task_type; `hours` controls the lookback window (default 24,
+    matching both scorers' own window).
     """
     try:
         from database import db_manager, RoutingOutcome
@@ -482,11 +485,18 @@ async def get_routing_outcomes(
             rows = query.order_by(RoutingOutcome.timestamp.desc()).limit(500).all()
 
             summary = defaultdict(lambda: {"attempts": 0, "successes": 0, "total_latency_ms": 0})
+            template_summary = defaultdict(lambda: {"attempts": 0, "successes": 0, "total_latency_ms": 0})
             for r in rows:
                 key = (r.task_type, r.provider_name)
                 summary[key]["attempts"] += 1
                 summary[key]["successes"] += 1 if r.success else 0
                 summary[key]["total_latency_ms"] += r.latency_ms or 0
+
+                if r.context_template:
+                    tkey = (r.task_type, r.context_template)
+                    template_summary[tkey]["attempts"] += 1
+                    template_summary[tkey]["successes"] += 1 if r.success else 0
+                    template_summary[tkey]["total_latency_ms"] += r.latency_ms or 0
 
             summary_out = [
                 {
@@ -499,9 +509,21 @@ async def get_routing_outcomes(
                 for (task_type_, provider_name_), s in summary.items()
             ]
 
+            template_summary_out = [
+                {
+                    "task_type": task_type_,
+                    "context_template": template_,
+                    "attempts": s["attempts"],
+                    "success_rate": round(s["successes"] / s["attempts"], 3) if s["attempts"] else None,
+                    "avg_latency_ms": round(s["total_latency_ms"] / s["attempts"]) if s["attempts"] else None,
+                }
+                for (task_type_, template_), s in template_summary.items()
+            ]
+
             return JSONResponse({
                 "window_hours": hours,
                 "summary": summary_out,
+                "context_template_summary": template_summary_out,
                 "recent": [r.to_dict() for r in rows[:100]]
             })
 
@@ -946,6 +968,24 @@ async def chatbot(request: Request, _auth: dict = Depends(require_chatbot_auth))
     task_type = data.get("task_type", task_router.DEFAULT_TASK_TYPE)
     provider_order = task_router.resolve_provider_order(task_type)
 
+    # Fold any request-supplied context into the system prompt. Which
+    # template (minimal/verbose) is used is itself chosen per task type -
+    # explicit CONTEXT_TEMPLATE_<TASK_TYPE> config, else the template that's
+    # been performing best for this task type once there's enough evidence,
+    # else ContextBuilder's own default. Only meaningful when context/
+    # product_context is actually present - see context_builder.py.
+    request_context = data.get("context")
+    product_context = data.get("product_context")
+    context_template = context_learner.resolve_template(
+        task_type, context_builder.config.get("prompt_template", "minimal")
+    )
+    system_prompt = context_builder.build_context_prompt(
+        system_prompt,
+        context=request_context,
+        product_context=product_context,
+        template_override=context_template
+    )
+
     # Use configured LLM providers (respects priority: 0 first, then fallback to 1, 2, etc.,
     # or the task-type route above when one is configured for this task_type)
     # Pass system_prompt separately so it can be sent as a system message
@@ -965,7 +1005,8 @@ async def chatbot(request: Request, _auth: dict = Depends(require_chatbot_auth))
                 provider_type=ptype.value if hasattr(ptype, "value") else str(ptype),
                 success=False,
                 latency_ms=latency_ms,
-                error=err
+                error=err,
+                context_template=context_template
             )
         raise
 
@@ -982,7 +1023,8 @@ async def chatbot(request: Request, _auth: dict = Depends(require_chatbot_auth))
             provider_type=ptype.value if hasattr(ptype, "value") else str(ptype),
             success=(err is None),
             latency_ms=latency_ms,
-            error=err
+            error=err,
+            context_template=context_template
         )
     response_text = result.get('response', '')
     model_version = result.get('model', 'unknown')
