@@ -6,6 +6,7 @@ Supports Gemini, OpenAI, DigitalOcean, and other hosted LLM providers.
 import os
 import logging
 import sys
+import time
 from typing import Optional, List, Dict, Callable, Any
 from enum import Enum
 import openai
@@ -33,17 +34,32 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+class AllProvidersFailedError(Exception):
+    """
+    Raised by LLMManager.generate() when every attempted provider failed.
+    Carries `attempts` (list of (provider_name, provider_type, latency_ms,
+    error_or_None) tuples) so callers can record which provider(s) were
+    actually tried, not just guess based on configured order.
+    """
+
+    def __init__(self, message: str, attempts: List[tuple]):
+        super().__init__(message)
+        self.attempts = attempts
+
+
 class LLMProvider(str, Enum):
     """Supported LLM providers."""
     GEMINI = "gemini"
     OPENAI = "openai"
     HUGGINGFACE = "huggingface"
     DIGITALOCEAN = "digitalocean"
+    CUSTOM = "custom"  # Bring-your-own-token: any OpenAI-compatible endpoint
+    # (local runtimes like Ollama/vLLM/LM Studio, or a hosted OpenAI-compatible API)
 
 
 class LLMConfig:
     """Configuration for an LLM provider."""
-    
+
     def __init__(
         self,
         provider: LLMProvider,
@@ -52,7 +68,9 @@ class LLMConfig:
         max_tokens: int = 2000,
         temperature: float = 0.7,
         priority: int = 0,
-        enabled: bool = True
+        enabled: bool = True,
+        name: Optional[str] = None,
+        base_url: Optional[str] = None
     ):
         self.provider = provider
         self.model_name = model_name
@@ -61,12 +79,19 @@ class LLMConfig:
         self.temperature = temperature
         self.priority = priority  # Lower number = higher priority
         self.enabled = enabled
-    
+        # `name` distinguishes multiple configs of the same provider type (e.g.
+        # several CUSTOM/BYOT endpoints). Defaults to the provider's own value.
+        self.name = name or provider.value
+        # Only used by CUSTOM (and any future provider needing a user-supplied endpoint).
+        self.base_url = base_url
+
     def to_dict(self) -> Dict:
         """Convert config to dictionary (without exposing API key)."""
         return {
             "provider": self.provider,
+            "name": self.name,
             "model_name": self.model_name,
+            "base_url": self.base_url,
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
             "priority": self.priority,
@@ -154,7 +179,38 @@ class LLMManager:
                 priority=int(os.getenv("DIGITALOCEAN_PRIORITY", "3")),
                 enabled=os.getenv("DIGITALOCEAN_AGENT_ENABLED", "false").lower() == "true"
             ))
-        
+
+        # Bring-your-own-token (BYOT) custom endpoints: any OpenAI-compatible API
+        # (local runtimes such as Ollama/vLLM/LM Studio, or a self-hosted/third-party
+        # OpenAI-compatible service). Configure one or more via:
+        #   CUSTOM_ENDPOINTS=mylocal,myvendor
+        #   CUSTOM_MYLOCAL_BASE_URL=http://localhost:11434/v1
+        #   CUSTOM_MYLOCAL_MODEL=llama3.1
+        #   CUSTOM_MYLOCAL_API_KEY=ollama          (many local runtimes accept any string)
+        #   CUSTOM_MYLOCAL_PRIORITY=0
+        #   CUSTOM_MYLOCAL_ENABLED=true
+        custom_endpoint_names = [
+            n.strip() for n in os.getenv("CUSTOM_ENDPOINTS", "").split(",") if n.strip()
+        ]
+        for endpoint_name in custom_endpoint_names:
+            prefix = f"CUSTOM_{endpoint_name.upper()}_"
+            base_url = os.getenv(f"{prefix}BASE_URL")
+            if not base_url:
+                logger.warning(
+                    f"CUSTOM endpoint '{endpoint_name}' listed in CUSTOM_ENDPOINTS but "
+                    f"{prefix}BASE_URL is not set; skipping."
+                )
+                continue
+            self.add_provider(LLMConfig(
+                provider=LLMProvider.CUSTOM,
+                name=endpoint_name,
+                model_name=os.getenv(f"{prefix}MODEL", "default"),
+                api_key=os.getenv(f"{prefix}API_KEY", "not-needed"),
+                base_url=base_url,
+                priority=int(os.getenv(f"{prefix}PRIORITY", "0")),
+                enabled=os.getenv(f"{prefix}ENABLED", "true").lower() == "true"
+            ))
+
         # Sort providers by priority
         self.providers.sort(key=lambda x: x.priority)
     
@@ -168,9 +224,20 @@ class LLMManager:
         self.providers = [p for p in self.providers if p.provider != provider]
     
     def get_provider_config(self, provider: LLMProvider) -> Optional[LLMConfig]:
-        """Get configuration for a specific provider."""
+        """Get configuration for a specific provider (first enabled match, by type)."""
         for config in self.providers:
             if config.provider == provider and config.enabled:
+                return config
+        return None
+
+    def get_provider_config_by_name(self, name: str) -> Optional[LLMConfig]:
+        """
+        Get configuration by its unique name. Needed to distinguish multiple
+        configs of the same provider type (e.g. several named CUSTOM/BYOT
+        endpoints), where get_provider_config() would only ever return the first.
+        """
+        for config in self.providers:
+            if config.name == name and config.enabled:
                 return config
         return None
     
@@ -239,6 +306,31 @@ class LLMManager:
         """Call HuggingFace Inference API (placeholder)."""
         # TODO: Implement HuggingFace inference
         raise NotImplementedError("HuggingFace inference not yet implemented")
+
+    def _call_custom(self, config: LLMConfig, prompt: str, **kwargs) -> str:
+        """
+        Call a bring-your-own-token (BYOT) endpoint: any OpenAI-compatible API,
+        whether a local runtime (Ollama, vLLM, LM Studio) or a hosted third-party
+        service the user points at via base_url.
+        """
+        try:
+            system_prompt = kwargs.get('system_prompt', '')
+            messages = []
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.append({"role": "user", "content": prompt})
+
+            client = openai.OpenAI(api_key=config.api_key, base_url=config.base_url)
+            response = client.chat.completions.create(
+                model=config.model_name,
+                messages=messages,
+                max_tokens=kwargs.get('max_tokens', config.max_tokens),
+                temperature=kwargs.get('temperature', config.temperature)
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            logger.error(f"Custom endpoint '{config.name}' error: {e}")
+            raise
     
     def _call_digitalocean(self, config: LLMConfig, prompt: str, **kwargs) -> str:
         """Call DigitalOcean Gradient AI Platform agent."""
@@ -300,42 +392,56 @@ class LLMManager:
         self,
         prompt: str,
         preferred_provider: Optional[LLMProvider] = None,
+        provider_order: Optional[List[str]] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
         Generate text using available LLM providers with fallback.
-        
+
         Args:
             prompt: The prompt to send to the LLM
-            preferred_provider: Optional preferred provider to try first
+            preferred_provider: Optional single provider type to try first
+            provider_order: Optional list of provider *names* (see LLMConfig.name)
+                specifying the exact try order, e.g. from task-based routing.
+                Any enabled providers not listed are appended afterward, so
+                task routing can prefer specific providers without losing the
+                fallback safety net.
             **kwargs: Additional parameters (max_tokens, temperature, etc.)
-            
+
         Returns:
             Dictionary with response text and metadata
-            
+
         Raises:
             Exception: If all providers fail
         """
         providers_to_try = self.providers.copy()
-        
+
+        if provider_order:
+            by_name = {p.name: p for p in providers_to_try}
+            ordered = [by_name[name] for name in provider_order if name in by_name]
+            remaining = [p for p in providers_to_try if p.name not in provider_order]
+            providers_to_try = ordered + remaining
+
         # If preferred provider specified, try it first
         if preferred_provider:
             config = self.get_provider_config(preferred_provider)
             if config:
                 providers_to_try = [config] + [p for p in providers_to_try if p.provider != preferred_provider]
-        
+
         # Filter to only enabled providers
         providers_to_try = [p for p in providers_to_try if p.enabled]
-        
+
         if not providers_to_try:
             raise Exception("No LLM providers configured or enabled")
-        
+
         last_error = None
-        
+        attempts = []  # (provider_name, provider_type, latency_ms, error_or_None)
+
         for config in providers_to_try:
+            attempt_start = time.monotonic()
             try:
                 logger.info(f"Attempting to use {config.provider} ({config.model_name})")
-                
+
                 if config.provider == LLMProvider.GEMINI:
                     response_text = self._call_gemini(config, prompt, **kwargs)
                 elif config.provider == LLMProvider.OPENAI:
@@ -344,26 +450,36 @@ class LLMManager:
                     response_text = self._call_huggingface(config, prompt, **kwargs)
                 elif config.provider == LLMProvider.DIGITALOCEAN:
                     response_text = self._call_digitalocean(config, prompt, **kwargs)
+                elif config.provider == LLMProvider.CUSTOM:
+                    response_text = self._call_custom(config, prompt, **kwargs)
                 else:
                     logger.warning(f"Unknown provider: {config.provider}")
                     continue
-                
+
+                latency_ms = int((time.monotonic() - attempt_start) * 1000)
+                attempts.append((config.name, config.provider, latency_ms, None))
+
                 return {
                     "response": response_text,
                     "provider": config.provider,
+                    "provider_name": config.name,
                     "model": config.model_name,
-                    "success": True
+                    "success": True,
+                    "latency_ms": latency_ms,
+                    "attempts": attempts
                 }
-                
+
             except Exception as e:
+                latency_ms = int((time.monotonic() - attempt_start) * 1000)
+                attempts.append((config.name, config.provider, latency_ms, str(e)))
                 last_error = e
                 logger.warning(f"Provider {config.provider} failed: {e}. Trying next provider...")
                 continue
-        
+
         # All providers failed
         error_msg = f"All LLM providers failed. Last error: {last_error}"
         logger.error(error_msg)
-        raise Exception(error_msg)
+        raise AllProvidersFailedError(error_msg, attempts)
     
     def update_provider_config(
         self,

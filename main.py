@@ -19,9 +19,10 @@ from message_logger import MessageLogger
 from response_logger import ChatLogger
 from auth import require_admin, require_chatbot_auth, verify_admin_credentials
 from token_manager import token_manager
-from llm_manager import llm_manager, LLMProvider
+from llm_manager import llm_manager, LLMProvider, AllProvidersFailedError
 from context_manager import context_manager
 from context_builder import context_builder
+import task_router
 
 import google.generativeai as genai
 from google.generativeai import types
@@ -447,11 +448,67 @@ async def list_llm_providers(current_user: dict = Depends(require_admin)):
     try:
         providers = llm_manager.list_providers()
         return JSONResponse({"providers": providers})
-        
+
     except Exception as e:
         logger.error(f"Error listing providers: {e}")
         return JSONResponse(
             {"error": "Failed to list providers"},
+            status_code=500
+        )
+
+
+@app.get("/admin/routing/outcomes")
+async def get_routing_outcomes(
+    task_type: Optional[str] = None,
+    hours: int = 24,
+    current_user: dict = Depends(require_admin)
+):
+    """
+    View recent task-routing outcomes and the per-(task_type, provider)
+    success rate / average latency the router is using to score providers.
+    Optionally filter to a single task_type; `hours` controls the lookback
+    window (default 24, matching the router's own scoring window).
+    """
+    try:
+        from database import db_manager, RoutingOutcome
+        from datetime import datetime, timedelta
+        from collections import defaultdict
+
+        since = datetime.utcnow() - timedelta(hours=hours)
+        with db_manager.get_session() as session:
+            query = session.query(RoutingOutcome).filter(RoutingOutcome.timestamp >= since)
+            if task_type:
+                query = query.filter(RoutingOutcome.task_type == task_type.lower())
+            rows = query.order_by(RoutingOutcome.timestamp.desc()).limit(500).all()
+
+            summary = defaultdict(lambda: {"attempts": 0, "successes": 0, "total_latency_ms": 0})
+            for r in rows:
+                key = (r.task_type, r.provider_name)
+                summary[key]["attempts"] += 1
+                summary[key]["successes"] += 1 if r.success else 0
+                summary[key]["total_latency_ms"] += r.latency_ms or 0
+
+            summary_out = [
+                {
+                    "task_type": task_type_,
+                    "provider_name": provider_name_,
+                    "attempts": s["attempts"],
+                    "success_rate": round(s["successes"] / s["attempts"], 3) if s["attempts"] else None,
+                    "avg_latency_ms": round(s["total_latency_ms"] / s["attempts"]) if s["attempts"] else None,
+                }
+                for (task_type_, provider_name_), s in summary.items()
+            ]
+
+            return JSONResponse({
+                "window_hours": hours,
+                "summary": summary_out,
+                "recent": [r.to_dict() for r in rows[:100]]
+            })
+
+    except Exception as e:
+        logger.error(f"Error fetching routing outcomes: {e}")
+        return JSONResponse(
+            {"error": "Failed to fetch routing outcomes"},
             status_code=500
         )
 
@@ -884,13 +941,49 @@ async def chatbot(request: Request, _auth: dict = Depends(require_chatbot_auth))
 
     response_logger.insert_message(session_id, "user", user_message)
 
-    # Use configured LLM providers (respects priority: 0 first, then fallback to 1, 2, etc.)
+    # Optional task-type hint (e.g. "code", "summarize", "extract", "reason").
+    # Defaults to "chat" if omitted - fully backward compatible with existing callers.
+    task_type = data.get("task_type", task_router.DEFAULT_TASK_TYPE)
+    provider_order = task_router.resolve_provider_order(task_type)
+
+    # Use configured LLM providers (respects priority: 0 first, then fallback to 1, 2, etc.,
+    # or the task-type route above when one is configured for this task_type)
     # Pass system_prompt separately so it can be sent as a system message
-    result = llm_manager.generate(
-        prompt=user_message,
-        system_prompt=system_prompt
-    )
+    try:
+        result = llm_manager.generate(
+            prompt=user_message,
+            system_prompt=system_prompt,
+            provider_order=provider_order or None
+        )
+    except AllProvidersFailedError as e:
+        # Record each provider actually attempted, then re-raise -
+        # /chatbot's error behavior is unchanged, this only adds outcome tracking.
+        for name, ptype, latency_ms, err in e.attempts:
+            task_router.record_outcome(
+                task_type=task_type,
+                provider_name=name,
+                provider_type=ptype.value if hasattr(ptype, "value") else str(ptype),
+                success=False,
+                latency_ms=latency_ms,
+                error=err
+            )
+        raise
+
     logger.info(f"LLM result: {result}")
+
+    # Record every attempt this request made, not just the winner - a request
+    # that fell back past one or more failing providers before succeeding
+    # should still count those as failures for scoring purposes.
+    winner_name = result.get('provider_name')
+    for name, ptype, latency_ms, err in result.get('attempts', []):
+        task_router.record_outcome(
+            task_type=task_type,
+            provider_name=name,
+            provider_type=ptype.value if hasattr(ptype, "value") else str(ptype),
+            success=(err is None),
+            latency_ms=latency_ms,
+            error=err
+        )
     response_text = result.get('response', '')
     model_version = result.get('model', 'unknown')
     token_count = result.get('tokens_used', 0)

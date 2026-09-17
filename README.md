@@ -63,17 +63,23 @@ docker-compose up --build
 
 ## Provider configuration
 
-BabbleBeaver currently ships with built-in support for **Gemini/Vertex AI**, **OpenAI**, and **DigitalOcean Gradient AI agents**, managed centrally by `llm_manager.py`. Each provider is configured entirely through environment variables — no code changes needed to enable, disable, reprioritize, or reconfigure a provider that's already supported:
+BabbleBeaver ships with built-in support for **Gemini/Vertex AI**, **OpenAI**, **DigitalOcean Gradient AI agents**, and a **bring-your-own-token (BYOT) custom provider** for any OpenAI-compatible endpoint — local runtimes like Ollama, vLLM, or LM Studio, or a self-hosted/third-party OpenAI-compatible API. All of it is managed centrally by `llm_manager.py` and configured entirely through environment variables — no code changes needed to enable, disable, reprioritize, or reconfigure a provider that's already supported:
 
 - `<PROVIDER>_ENABLED` — `true`/`false`
 - `<PROVIDER>_PRIORITY` — lower number = tried first; `llm_manager` falls back to the next enabled provider on failure
 - `<PROVIDER>_MODEL` / provider-specific keys (API keys, URLs, etc.)
 
-See `example.env` for the full list of supported variables per provider.
+See `example.env` for the full list of supported variables per provider, including `CUSTOM_ENDPOINTS`/`CUSTOM_<NAME>_*` for BYOT.
 
-**Adding support for a new provider** (one not already built in) currently requires implementing a `_call_<provider>` method in `llm_manager.py` and registering it in the `LLMProvider` enum and dispatch logic — there is no plugin/config-only mechanism yet. This is a known gap relative to BabbleBeaver's provider-agnostic goals; see [SECURITY.md](SECURITY.md) and open issues for the extension-point work in progress. `HuggingFace` is present in configuration but not yet implemented (`NotImplementedError`).
+**Adding support for a new provider *type*** (one not already built in, e.g. a bespoke non-OpenAI-compatible API) currently requires implementing a `_call_<provider>` method in `llm_manager.py` and registering it in the `LLMProvider` enum and dispatch logic — there is no plugin/config-only mechanism yet for entirely new provider types. `HuggingFace` is present in configuration but not yet implemented (`NotImplementedError`). This is a smaller gap than it used to be: most local and third-party runtimes speak the OpenAI chat-completions API, so they're covered by the BYOT `CUSTOM` provider without any code changes.
 
 A `model_config/model_config.ini` file exists in the repo from an earlier architecture but is **not read by the running application** — ignore it; provider configuration is env-var driven as described above.
+
+### Task-based routing
+
+By default, `/chatbot` tries providers in priority order with automatic fallback, same as always. Optionally, callers can pass a `task_type` (e.g. `"chat"`, `"code"`, `"summarize"`, `"extract"`, `"reason"`) in the request body to route that request through a specific ordered set of providers, configured via `ROUTE_<TASK_TYPE>=<provider_name>[,<provider_name>...]` — for example, sending code-generation tasks to a local model while summarization goes to a hosted provider.
+
+BabbleBeaver records the outcome (success/failure, latency) of every provider actually attempted for each task type, and uses that history to reorder future attempts within a task type — a provider that's been failing or slow for a *specific* task type gets tried later, automatically, without editing the `ROUTE_<TASK_TYPE>` config by hand. This only reorders; it never removes a configured provider from the fallback chain. View the data behind this via `GET /admin/routing/outcomes` (admin auth required).
 
 ## Features
 

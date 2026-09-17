@@ -75,6 +75,38 @@ class APIToken(Base):
         }
 
 
+class RoutingOutcome(Base):
+    """
+    Outcome of a single task-routing attempt: which provider handled a given
+    task type, whether it succeeded, and how long it took. Feeds the routing
+    scorer so repeated failures/slowness for a (task_type, provider) pair
+    demote that provider without requiring a manual config change.
+    """
+    __tablename__ = 'routing_outcomes'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    task_type = Column(String(50), nullable=False, index=True)
+    provider_name = Column(String(100), nullable=False, index=True)
+    provider_type = Column(String(50), nullable=False)
+    success = Column(Boolean, nullable=False)
+    latency_ms = Column(Integer)
+    error = Column(Text, nullable=True)
+
+    def to_dict(self):
+        """Convert model to dictionary."""
+        return {
+            'id': self.id,
+            'timestamp': self.timestamp.isoformat() if self.timestamp else None,
+            'task_type': self.task_type,
+            'provider_name': self.provider_name,
+            'provider_type': self.provider_type,
+            'success': self.success,
+            'latency_ms': self.latency_ms,
+            'error': self.error
+        }
+
+
 class DatabaseManager:
     """
     Database manager with automatic SQLite/PostgreSQL switching.
