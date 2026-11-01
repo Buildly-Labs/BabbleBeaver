@@ -101,6 +101,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Optional hosted billing module (private package: Buildly-Labs/babblebeaver-billing).
+# Off by default. If it is enabled but missing/misconfigured, log and keep serving without it -
+# billing must never be able to take down the rest of this app.
+if os.getenv("BILLING_MODULE_ENABLED", "false").lower() == "true":
+    try:
+        from bb_billing.mount import mount as _mount_billing
+        _mount_billing(app)
+    except Exception:
+        logger.exception("Hosted billing module failed to mount; continuing without it")
+
 # Static and template mounting
 templates = Jinja2Templates(directory="templates")
 
