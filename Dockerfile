@@ -20,7 +20,7 @@ COPY . .
 # variable, so builds without it are unchanged. Pinned to a tag for reproducible builds.
 ARG BB_BILLING_GH_TOKEN=""
 RUN if [ -n "$BB_BILLING_GH_TOKEN" ]; then \
-      pip install --no-cache-dir "git+https://x-access-token:${BB_BILLING_GH_TOKEN}@github.com/Buildly-Labs/babblebeaver-billing.git@v0.1.0"; \
+      pip install --no-cache-dir "git+https://x-access-token:${BB_BILLING_GH_TOKEN}@github.com/Buildly-Labs/babblebeaver-billing.git@v0.1.1"; \
     fi
 
 # GCP credentials (if needed) are provided at runtime via GOOGLE_APPLICATION_CREDENTIALS
