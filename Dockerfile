@@ -9,9 +9,10 @@ ENV PYTHONUNBUFFERED 1
 # Set work directory
 WORKDIR /app
 
-# Install dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install dependencies. constraints.txt pins every package to the versions known to work, because the
+# unpinned requirements drift on a rebuild (see the header of constraints.txt).
+COPY requirements.txt constraints.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -c constraints.txt
 
 # Copy project
 COPY . .
@@ -20,7 +21,7 @@ COPY . .
 # Installed only when the submodule was checked out, so clones and builds without access to the private
 # repo are unchanged.
 RUN if [ -f vendor/babblebeaver-billing/pyproject.toml ]; then \
-      pip install --no-cache-dir ./vendor/babblebeaver-billing; \
+      pip install --no-cache-dir -c constraints.txt ./vendor/babblebeaver-billing; \
     else \
       echo "hosted billing module not present; skipping"; \
     fi
