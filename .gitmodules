@@ -1,0 +1,3 @@
+[submodule "vendor/babblebeaver-billing"]
+	path = vendor/babblebeaver-billing
+	url = https://github.com/Buildly-Labs/babblebeaver-billing.git

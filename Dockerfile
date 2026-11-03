@@ -16,11 +16,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy project
 COPY . .
 
-# Optional private billing module. Installed only when a read-only GitHub token is supplied as a build
-# variable, so builds without it are unchanged. Pinned to a tag for reproducible builds.
-ARG BB_BILLING_GH_TOKEN=""
-RUN if [ -n "$BB_BILLING_GH_TOKEN" ]; then \
-      pip install --no-cache-dir "git+https://x-access-token:${BB_BILLING_GH_TOKEN}@github.com/Buildly-Labs/babblebeaver-billing.git@v0.1.3"; \
+# Optional private billing module, vendored as a git submodule (vendor/babblebeaver-billing, pinned to a tag).
+# Installed only when the submodule was checked out, so clones and builds without access to the private
+# repo are unchanged.
+RUN if [ -f vendor/babblebeaver-billing/pyproject.toml ]; then \
+      pip install --no-cache-dir ./vendor/babblebeaver-billing; \
+    else \
+      echo "hosted billing module not present; skipping"; \
     fi
 
 # GCP credentials (if needed) are provided at runtime via GOOGLE_APPLICATION_CREDENTIALS
